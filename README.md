@@ -152,4 +152,4 @@ Works on Vercel, Netlify, Cloudflare Pages, GitHub Pages, or a plain S3 bucket. 
 
 ## License
 
-MIT
+[MIT](./LICENSE) © arafat.koko
