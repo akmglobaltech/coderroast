@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import FindingsList from "./components/FindingsList";
 import ScoreCard from "./components/ScoreCard";
 import StatsPanel from "./components/StatsPanel";
-import { analyze, shareText, type Language, type RoastResult } from "./lib/roast";
+import { analyze, normalizeCode, shareText, type Language, type RoastResult } from "./lib/roast";
 import { renderShareCard } from "./lib/share";
 
 const LANGUAGES: Array<{ value: Language | "auto"; label: string }> = [
@@ -74,7 +74,10 @@ export default function App() {
   const resultsRef = useRef<HTMLDivElement>(null);
 
   const charCount = code.length;
-  const lineCount = useMemo(() => (code ? code.split("\n").length : 0), [code]);
+  const lineCount = useMemo(
+    () => (code.trim() ? normalizeCode(code).split("\n").length : 0),
+    [code],
+  );
 
   const roast = useCallback(() => {
     if (!code.trim()) return;

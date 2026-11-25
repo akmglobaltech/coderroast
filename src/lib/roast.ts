@@ -755,8 +755,16 @@ const VERDICTS: Record<string, string> = {
 /* public API                                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Drops trailing whitespace only. Leading blank lines are preserved so that
+ * reported line numbers keep matching the editor's gutter.
+ */
+export function normalizeCode(code: string): string {
+  return code.replace(/\s+$/, "");
+}
+
 export function analyze(code: string, hint?: Language): RoastResult {
-  const trimmed = code.trim();
+  const trimmed = normalizeCode(code);
   const language = detectLanguage(trimmed, hint);
   const stats = computeStats(trimmed);
 

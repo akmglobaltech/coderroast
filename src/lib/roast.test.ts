@@ -216,6 +216,19 @@ describe("analyze", () => {
     );
     expect(fourCriticals.score).toBe(40);
   });
+
+  it("keeps reported line numbers aligned when the snippet starts with blank lines", () => {
+    const result = analyze("\n\n\nvar x = 1;\n");
+    const varFinding = result.findings.find((f) => f.id === "var");
+    expect(varFinding).toBeDefined();
+    // The `var` sits on the 4th line of the pasted text, not the 1st.
+    expect(varFinding?.line).toBe(4);
+  });
+
+  it("ignores trailing blank lines when counting lines", () => {
+    const result = analyze("const a = 1;\n\n\n");
+    expect(result.stats.lines).toBe(1);
+  });
 });
 
 describe("shareText", () => {
