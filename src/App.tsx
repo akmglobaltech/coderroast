@@ -22,6 +22,12 @@ const LANGUAGES: Array<{ value: Language | "auto"; label: string }> = [
   { value: "css", label: "CSS" },
 ];
 
+// The app is served from a subpath on GitHub Pages, so `origin` alone would
+// produce a link that 404s. Keep the trailing slash off for a clean share line.
+function appUrl(): string {
+  return `${window.location.origin}${import.meta.env.BASE_URL}`.replace(/\/$/, "");
+}
+
 
 export default function App() {
   const [code, setCode] = useState("");
@@ -73,7 +79,7 @@ export default function App() {
   const copy = async () => {
     if (!result) return;
     try {
-      await navigator.clipboard.writeText(shareText(result, window.location.origin));
+      await navigator.clipboard.writeText(shareText(result, appUrl()));
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
