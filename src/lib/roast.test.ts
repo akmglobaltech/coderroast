@@ -265,6 +265,19 @@ describe("language scoping", () => {
     const result = analyze(css, "css");
     expect(result.findings.some((f) => f.id === "todo")).toBe(true);
   });
+
+  it("does not run HTML rules on an undetected snippet", () => {
+    // Prose has no language markers, so detection returns `unknown`. An
+    // undetected snippet must not inherit HTML-only rules.
+    const result = analyze("just some words here");
+    expect(result.language).toBe("unknown");
+    expect(result.findings.some((f) => f.id === "html-doctype")).toBe(false);
+  });
+
+  it("labels a bare call statement as JavaScript", () => {
+    expect(detectLanguage('eval("x");')).toBe("javascript");
+    expect(detectLanguage("doThing();")).toBe("javascript");
+  });
 });
 
 describe("html rules", () => {

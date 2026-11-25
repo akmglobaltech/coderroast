@@ -209,6 +209,9 @@ export function detectLanguage(code: string, hint?: Language): Language {
   // C-style control flow with parentheses: enough to label a short snippet that
   // has no declarations at all, without outvoting a language with real markers.
   if (/\b(if|for|while|switch|try|catch)\s*\(/.test(src)) bump("javascript", 2);
+  // A bare `name(...);` statement. Weak on purpose: it only decides snippets
+  // that produced no other signal at all, such as `eval("x");`.
+  if (/\b[\w.$]+\s*\([^)]*\)\s*;/.test(src)) bump("javascript", 1);
 
   // A bare SQL statement is only SQL when it isn't wrapped in code punctuation.
   if (/^\s*(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+TABLE)\b/i.test(src)) {
@@ -1287,9 +1290,11 @@ export function analyze(code: string, hint?: Language): RoastResult {
 
   const findings: Finding[] = [];
   for (const rule of RULES) {
-    // An undetected snippet keeps every rule: silently dropping rules because
-    // detection failed would under-report, which is worse than a stray finding.
-    if (rule.langs && language !== "unknown" && !rule.langs.includes(language)) continue;
+    // A rule scoped to a language must not fire on a snippet detected as
+    // something else. `unknown` means detection failed, so only the
+    // language-agnostic rules run — a stray HTML finding on JavaScript is
+    // worse than a missed one.
+    if (rule.langs && !rule.langs.includes(language)) continue;
     for (const h of rule.run(trimmed, stats, language)) {
       findings.push({
         id: rule.id,

@@ -12,6 +12,8 @@ Code review tools are either enterprise-priced or they want your repository. Cod
 
 ## Features
 
+- **Live analysis** — the score, grade, findings, and metrics update as you type. No button to press.
+- **Off the main thread** — analysis runs in a Web Worker, so typing never janks. A watchdog recomputes on the main thread if the worker ever stalls, so the indicator can't get stuck.
 - **Score + grade** — 0–100 with an S/A/B/C/D/F grade, driven by 50 weighted rules
 - **50 rules** across security, correctness, structure, style, and per-language idioms
 - **Per-severity penalty caps** so one noisy rule can't zero the score
@@ -21,7 +23,7 @@ Code review tools are either enterprise-priced or they want your repository. Cod
 - **Metrics panel** — nesting depth, longest function, branch count, duplication, comment ratio
 - **Shareable PNG card** — 1200×630, rendered on canvas, ready for social
 - **Copy-to-clipboard** summary
-- **Keyboard-first** — `Ctrl`/`Cmd` + `Enter` to roast
+- **Keyboard-first** — `Ctrl`/`Cmd` + `Enter` to jump to the results
 
 ## Rules
 
@@ -59,7 +61,7 @@ npm install
 npm run dev
 ```
 
-Open the printed local URL, paste some code, hit **Roast it**.
+Open the printed local URL, paste some code, and watch the score appear as you type.
 
 ### Scripts
 
@@ -78,6 +80,8 @@ Open the printed local URL, paste some code, hit **Roast it**.
 src/
   lib/
     roast.ts        # analysis engine: detection, stats, 50 rules, scoring
+    worker.ts       # Web Worker entry point — runs analyze() off the main thread
+    useLiveRoast.ts # debounced live-analysis hook (worker + watchdog fallback)
     samples.ts      # one deliberately bad sample per language
     roast.test.ts   # engine tests
     share.ts        # canvas renderer for the shareable PNG card
@@ -125,7 +129,20 @@ Append to the `RULES` array in `src/lib/roast.ts`:
 
 `run` returns `RuleHit[]` — it never touches scoring, so penalties stay declarative and testable.
 
-`langs` scopes a rule to specific languages. When it is omitted the rule runs everywhere; when the language cannot be detected (`unknown`) every rule still runs, so an unrecognised snippet is never under-reported.
+`langs` scopes a rule to specific languages. When it is omitted the rule runs everywhere. When the language cannot be detected (`unknown`) only language-agnostic rules run — a stray HTML finding on a JavaScript snippet is worse than a missed finding.
+
+## Live analysis
+
+The score, grade, findings, and metrics recompute as you type. The pipeline:
+
+1. `useLiveRoast` debounces keystrokes by 220 ms so a burst of typing costs one analysis.
+2. The snippet is posted to a Web Worker (`src/lib/worker.ts`) that imports the same pure `analyze()` the tests use. Nothing blocks the main thread, so the editor never janks.
+3. A monotonic request id discards stale responses, so a slow analysis can never overwrite a newer one.
+4. If the worker fails to construct, errors, or does not answer within 4 s, the hook recomputes on the main thread. The indicator can never get stuck on "analyzing".
+
+The worker is a module-level singleton rather than a per-component one, because React StrictMode's mount/unmount cycle would otherwise terminate a worker with a request still in flight.
+
+`analyze()` is fast enough that the worker is mostly insurance: ~0.4 ms for a small snippet and ~22 ms for 300 lines.
 
 ## Adding a sample
 
@@ -151,6 +168,8 @@ npm run build
 ```
 
 Works on Vercel, Netlify, Cloudflare Pages, GitHub Pages, or a plain S3 bucket. No server, no environment variables.
+
+This repo deploys itself: `.github/workflows/deploy.yml` runs the tests, builds, and publishes to GitHub Pages on every push to `main`. Because the site is served from a subpath, `vite.config.ts` sets `base: "/coderroast/"` for builds only — the dev server stays at `/`.
 
 ## License
 

@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import FindingsList from "./components/FindingsList";
 import ScoreCard from "./components/ScoreCard";
 import StatsPanel from "./components/StatsPanel";
-import { analyze, normalizeCode, shareText, type Language, type RoastResult } from "./lib/roast";
+import { normalizeCode, shareText, type Language } from "./lib/roast";
 import { SAMPLES } from "./lib/samples";
 import { renderShareCard } from "./lib/share";
+import { useLiveRoast } from "./lib/useLiveRoast";
 
 const LANGUAGES: Array<{ value: Language | "auto"; label: string }> = [
   { value: "auto", label: "Auto-detect" },
@@ -28,14 +29,13 @@ function appUrl(): string {
   return `${window.location.origin}${import.meta.env.BASE_URL}`.replace(/\/$/, "");
 }
 
-
 export default function App() {
   const [code, setCode] = useState("");
   const [language, setLanguage] = useState<Language | "auto">("auto");
-  const [result, setResult] = useState<RoastResult | null>(null);
-  const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
+
+  const { result, pending, flush } = useLiveRoast(code, language);
 
   const charCount = code.length;
   const lineCount = useMemo(
@@ -43,24 +43,17 @@ export default function App() {
     [code],
   );
 
-  const roast = useCallback(() => {
-    if (!code.trim()) return;
-    setBusy(true);
-    // A short beat so the score animation reads as a reveal, not a flicker.
+  const reveal = () => {
+    flush();
     window.setTimeout(() => {
-      const next = analyze(code, language === "auto" ? undefined : language);
-      setResult(next);
-      setBusy(false);
-      window.setTimeout(() => {
-        resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 60);
-    }, 260);
-  }, [code, language]);
+      resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+  };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
-      roast();
+      reveal();
     }
   };
 
@@ -134,14 +127,24 @@ export default function App() {
               type="button"
               onClick={() => {
                 setCode("");
-                setResult(null);
               }}
               className="rounded-lg border border-ink-line bg-ink-soft px-3 py-1.5 font-mono text-xs text-white/60 transition hover:border-flame/40 hover:text-white"
             >
               Clear
             </button>
 
-            <span className="ml-auto font-mono text-[11px] text-white/30">
+            <span className="ml-auto flex items-center gap-2 font-mono text-[11px] text-white/30">
+              {code.trim() && (
+                <span
+                  className={`flex items-center gap-1.5 ${pending ? "text-flame/70" : "text-emerald-400/60"}`}
+                  title={pending ? "Analyzing…" : "Score is up to date"}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${pending ? "animate-pulse bg-flame" : "bg-emerald-400"}`}
+                  />
+                  {pending ? "analyzing" : "live"}
+                </span>
+              )}
               {lineCount} lines · {charCount.toLocaleString()} chars
             </span>
           </div>
@@ -151,24 +154,24 @@ export default function App() {
             onChange={(e) => setCode(e.target.value)}
             onKeyDown={onKeyDown}
             spellCheck={false}
-            placeholder={"// paste your code here\n// then hit Roast it (or Ctrl/Cmd + Enter)"}
+            placeholder={"// paste your code here\n// the score updates as you type"}
             className="scroll-thin h-[420px] w-full resize-y rounded-xl border border-ink-line bg-ink-soft/70 p-4 font-mono text-[13px] leading-relaxed text-white/85 outline-none transition placeholder:text-white/20 focus:border-flame/50 lg:h-[520px]"
           />
 
           <button
             type="button"
-            onClick={roast}
-            disabled={!code.trim() || busy}
+            onClick={reveal}
+            disabled={!code.trim()}
             className={`mt-3 w-full rounded-xl px-6 py-3.5 text-sm font-bold tracking-wide transition ${
-              !code.trim() || busy
+              !code.trim()
                 ? "cursor-not-allowed bg-white/5 text-white/25"
                 : "animate-pulse-ring bg-gradient-to-r from-flame to-flame-hot text-ink hover:brightness-110"
             }`}
           >
-            {busy ? "Roasting…" : "Roast it 🔥"}
+            Roast it 🔥
           </button>
           <p className="mt-2 text-center font-mono text-[10px] text-white/25">
-            Ctrl / Cmd + Enter
+            Live analysis · Ctrl / Cmd + Enter to jump to results
           </p>
         </section>
 
@@ -180,7 +183,7 @@ export default function App() {
                 <div className="mb-3 text-4xl opacity-40">🍳</div>
                 <p className="text-sm font-medium text-white/45">No roast yet.</p>
                 <p className="mt-1 text-xs text-white/25">
-                  Paste code on the left and press Roast it.
+                  Paste code on the left — the score appears as you type.
                 </p>
               </div>
             </div>
