@@ -105,13 +105,14 @@ export default function App() {
     a.href = url;
     a.download = `coderroast-${result.score}-${result.grade}.png`;
     a.click();
-    URL.revokeObjectURL(url);
+    // Revoking synchronously can cancel the download in Firefox/Safari.
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
   };
 
   const copy = async () => {
     if (!result) return;
     try {
-      await navigator.clipboard.writeText(shareText(result));
+      await navigator.clipboard.writeText(shareText(result, window.location.origin));
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {

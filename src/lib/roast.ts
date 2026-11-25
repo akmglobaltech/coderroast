@@ -144,9 +144,23 @@ export function detectLanguage(code: string, hint?: Language): Language {
     score[lang] = (score[lang] ?? 0) + n;
   };
 
-  if (/\binterface\s+\w+\s*\{/.test(src) || /:\s*(string|number|boolean)\b/.test(src)) {
-    bump("typescript", 3);
-  }
+  // TypeScript markers. TS is a superset of JS, so these are handled specially
+  // below: if any fire alongside JS signals, TypeScript wins.
+  const tsMarkers = [
+    /\binterface\s+\w+\s*(<[^>]*>)?\s*\{/, // interface Foo {
+    /:\s*(string|number|boolean|any|void|unknown|never|object)\b/, // type annotation
+    /\btype\s+\w+\s*=/, // type alias
+    /\bas\s+(const|string|number|boolean|unknown|any)\b/, // assertion
+    /\breadonly\s+\w+/, // readonly modifier
+    /\benum\s+\w+\s*\{/, // enum
+    /\bimplements\s+\w+/, // implements clause
+    /\?\s*:\s*\w+/, // optional property
+    /<\w+(\s*,\s*\w+)*>\s*\(/, // generic call
+    /\bdeclare\s+(const|let|var|function|module)\b/,
+  ];
+  const tsHits = tsMarkers.filter((re) => re.test(src)).length;
+  if (tsHits > 0) bump("typescript", tsHits * 3);
+
   if (/\bimport\s+.*\bfrom\s+['"]/.test(src)) bump("javascript", 2);
   if (/\bdef\s+\w+\s*\(/.test(src) || /^\s*from\s+\w+\s+import\s/m.test(src)) bump("python", 4);
   if (/\bpublic\s+(static\s+)?(void|class)\b/.test(src) || /\bSystem\.out\.println/.test(src)) {
@@ -183,6 +197,11 @@ export function detectLanguage(code: string, hint?: Language): Language {
       best = lang as Language;
     }
   }
+
+  // TypeScript is a superset of JavaScript: valid TS is also valid JS, so when
+  // TS syntax is present it is the more specific (and correct) answer.
+  if (best === "javascript" && (score.typescript ?? 0) > 0) return "typescript";
+
   return best;
 }
 
@@ -805,14 +824,14 @@ export function analyze(code: string, hint?: Language): RoastResult {
   };
 }
 
-export function shareText(result: RoastResult): string {
+export function shareText(result: RoastResult, url?: string): string {
   if (result.empty) return "CodeRoast — paste some code and find out.";
   const top = result.findings.slice(0, 3).map((f) => `• ${f.title}`).join("\n");
   return [
     `I scored ${result.score}/100 (${result.grade}) on CodeRoast.`,
     result.headline,
     top ? `\nTop crimes:\n${top}` : "",
-    "\nRoast your own code:",
+    url ? `\nRoast your own code: ${url}` : "\nRoast your own code.",
   ]
     .filter(Boolean)
     .join("\n");

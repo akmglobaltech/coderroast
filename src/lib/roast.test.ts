@@ -14,6 +14,20 @@ describe("detectLanguage", () => {
     expect(detectLanguage("interface User { id: string }")).toBe("typescript");
   });
 
+  it("prefers typescript over javascript for annotated code", () => {
+    const ts = "export function add(a: number, b: number): number {\n  return a + b;\n}";
+    expect(detectLanguage(ts)).toBe("typescript");
+  });
+
+  it("prefers typescript for type aliases and generics", () => {
+    expect(detectLanguage("type Id = string;\nconst ids: Id[] = [];")).toBe("typescript");
+    expect(detectLanguage("const x = new Map<string, number>();")).toBe("typescript");
+  });
+
+  it("still reports plain javascript when no type syntax is present", () => {
+    expect(detectLanguage("const x = 1;\nfunction f(a) { return a + x; }")).toBe("javascript");
+  });
+
   it("detects sql", () => {
     expect(detectLanguage("SELECT * FROM users WHERE id = 1")).toBe("sql");
   });
@@ -214,5 +228,14 @@ describe("shareText", () => {
 
   it("handles the empty result", () => {
     expect(shareText(analyze(""))).toContain("CodeRoast");
+  });
+
+  it("appends the share url when one is given", () => {
+    const text = shareText(analyze("const x = eval(y);"), "https://coderroast.app");
+    expect(text).toContain("https://coderroast.app");
+  });
+
+  it("never leaves a dangling colon when no url is given", () => {
+    expect(shareText(analyze("const x = eval(y);"))).not.toMatch(/:\s*$/);
   });
 });
