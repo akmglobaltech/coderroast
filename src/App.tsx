@@ -3,6 +3,7 @@ import FindingsList from "./components/FindingsList";
 import ScoreCard from "./components/ScoreCard";
 import StatsPanel from "./components/StatsPanel";
 import { analyze, normalizeCode, shareText, type Language, type RoastResult } from "./lib/roast";
+import { SAMPLES } from "./lib/samples";
 import { renderShareCard } from "./lib/share";
 
 const LANGUAGES: Array<{ value: Language | "auto"; label: string }> = [
@@ -21,49 +22,6 @@ const LANGUAGES: Array<{ value: Language | "auto"; label: string }> = [
   { value: "css", label: "CSS" },
 ];
 
-const SAMPLE = `var API_KEY = "sk_live_9f2b7c41aa8e4d3f";
-var users = [];
-
-function getUser(id) {
-  var q = "SELECT * FROM users WHERE id = " + id;
-  var res = db.query(q);
-  if (res == null) {
-    try {
-      return JSON.parse(eval("(" + res + ")"));
-    } catch (e) {}
-  }
-  for (var i = 0; i < res.length; i++) {
-    for (var j = 0; j < res[i].items.length; j++) {
-      for (var k = 0; k < res[i].items[j].tags.length; k++) {
-        if (res[i].items[j].tags[k] == "vip") {
-          if (res[i].items[j].price > 100) {
-            if (res[i].items[j].stock != 0) {
-              users.push(res[i].items[j]);
-            }
-          }
-        }
-      }
-    }
-  }
-  document.getElementById("out").innerHTML = res;
-  console.log("got users", users);
-  console.log("count", users.length);
-  console.log("done");
-  console.log("really done");
-  // return users;
-  // users = [];
-  return users;
-}
-
-function getUserAgain(id) {
-  var q = "SELECT * FROM users WHERE id = " + id;
-  var res = db.query(q);
-  return res;
-}
-
-// TODO: fix this before launch
-// FIXME: actually fix it
-`;
 
 export default function App() {
   const [code, setCode] = useState("");
@@ -159,7 +117,8 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() => setCode(SAMPLE)}
+              onClick={() => setCode(SAMPLES[language])}
+              title={`Load a deliberately bad ${language === "auto" ? "JavaScript" : LANGUAGES.find((l) => l.value === language)?.label} sample`}
               className="rounded-lg border border-ink-line bg-ink-soft px-3 py-1.5 font-mono text-xs text-white/60 transition hover:border-flame/40 hover:text-white"
             >
               Load sample

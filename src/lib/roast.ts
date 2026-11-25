@@ -83,12 +83,15 @@ const SEVERITY_CAP: Record<Severity, number> = {
 
 /** Blank out string literals and trailing comments so brace counting is sane. */
 function stripNoise(line: string): string {
-  return line
+  const stripped = line
     .replace(/`(?:\\.|[^`\\])*`/g, "``")
     .replace(/"(?:\\.|[^"\\])*"/g, '""')
     .replace(/'(?:\\.|[^'\\])*'/g, "''")
-    .replace(/\/\/.*$/, "")
-    .replace(/#.*$/, "");
+    .replace(/\/\/.*$/, "");
+  // `#` opens a comment in Python/Ruby/shell but is an ID selector in CSS,
+  // so only treat it as a comment when the line is not a CSS rule.
+  if (stripped.includes("{")) return stripped;
+  return stripped.replace(/(^|\s)#.*$/, "$1");
 }
 
 /** Blanks out string literals across the whole snippet, so keywords quoted
@@ -106,14 +109,14 @@ function isBlank(line: string): boolean {
 
 function isComment(line: string): boolean {
   const t = line.trim();
-  return (
-    t.startsWith("//") ||
-    t.startsWith("/*") ||
-    t.startsWith("*") ||
-    t.startsWith("#") ||
-    t.startsWith("--") ||
-    t.startsWith("<!--")
-  );
+  if (t.startsWith("//") || t.startsWith("/*") || t.startsWith("*") || t.startsWith("<!--")) {
+    return true;
+  }
+  // `#` is a comment in Python/Ruby/shell but an ID selector in CSS.
+  if (t.startsWith("#")) return !t.includes("{");
+  // `--` is a comment in SQL/Lua but a custom-property prefix in CSS.
+  if (t.startsWith("--")) return !/^--[\w-]+\s*:/.test(t);
+  return false;
 }
 
 function countMatches(code: string, re: RegExp): number {
@@ -166,13 +169,35 @@ export function detectLanguage(code: string, hint?: Language): Language {
   if (/\bpublic\s+(static\s+)?(void|class)\b/.test(src) || /\bSystem\.out\.println/.test(src)) {
     bump("java", 4);
   }
-  if (/\busing\s+System\b/.test(src) || /\bConsole\.WriteLine/.test(src)) bump("csharp", 4);
+  // `import java.util.*` is unambiguous Java; C# uses `using` instead.
+  if (/\bimport\s+java\./.test(src)) bump("java", 6);
+  if (/\busing\s+System\b/.test(src) || /\bConsole\.WriteLine/.test(src)) bump("csharp", 6);
+  if (/\bnamespace\s+[\w.]+/.test(src) || /\bpublic\s+class\s+\w+\s*:/.test(src)) bump("csharp", 4);
   if (/\bfunc\s+\w+\s*\(/.test(src) || /\bpackage\s+main\b/.test(src)) bump("go", 4);
   if (/\bfn\s+\w+\s*\(/.test(src) || /\blet\s+mut\b/.test(src)) bump("rust", 4);
-  if (/<\?php/.test(src) || /\$\w+\s*=(?!=)/.test(src)) bump("php", 3);
-  if (/\bputs\s+/.test(src) || /^\s*end\s*$/m.test(src)) bump("ruby", 2);
+  // `<?php` is decisive; `$var =` alone is weaker because JS templates use `$`.
+  if (/<\?php/.test(src)) bump("php", 8);
+  else if (/\$\w+\s*=(?!=)/.test(src)) bump("php", 3);
+  // Ruby shares `def` with Python, so it needs its own decisive markers.
+  if (/\bputs\s+/.test(src) || /^\s*end\s*$/m.test(src)) bump("ruby", 4);
+  if (/\brequire\s+['"]/.test(src) || /\bdo\s*\|/.test(src) || /\battr_(accessor|reader|writer)\b/.test(src)) {
+    bump("ruby", 3);
+  }
   if (/<(!doctype|html|div|span|body)\b/i.test(src)) bump("html", 4);
   if (/[.#][\w-]+\s*\{[^}]*:[^}]*;/.test(src)) bump("css", 3);
+
+  // A document that opens with a doctype or <html> is HTML, whatever else is
+  // inlined in it. Without this an HTML file with a <script> block gets
+  // outvoted by its own JavaScript.
+  if (/^\s*<!doctype\s+html/i.test(src) || /^\s*<html\b/i.test(src)) bump("html", 12);
+  if (/<\/?(head|body|meta|link|title|section|header|footer|nav|main|form|input|button|table|ul|li|img|a|p|h[1-6])\b/i.test(src)) {
+    bump("html", 3);
+  }
+
+  // CSS: a selector block with at least two declarations, or an at-rule.
+  if (/[^{}]*\{[^{}]*:[^{}]*;[^{}]*:[^{}]*;[^{}]*\}/.test(src)) bump("css", 6);
+  if (/@(media|supports|keyframes|font-face|import)\b/.test(src)) bump("css", 4);
+  if (/^\s*(:root|html|body|\*)\s*[,{]/m.test(src)) bump("css", 3);
 
   // JS-family signals are the common case, so they get enough weight to beat a
   // stray SQL/HTML keyword that leaked in from a template or a comment.
@@ -181,6 +206,9 @@ export function detectLanguage(code: string, hint?: Language): Language {
   if (/\bconsole\.\w+\s*\(/.test(src)) bump("javascript", 2);
   if (/\bdocument\.\w+/.test(src) || /\bwindow\.\w+/.test(src)) bump("javascript", 2);
   if (/\brequire\s*\(/.test(src) || /\bmodule\.exports\b/.test(src)) bump("javascript", 2);
+  // C-style control flow with parentheses: enough to label a short snippet that
+  // has no declarations at all, without outvoting a language with real markers.
+  if (/\b(if|for|while|switch|try|catch)\s*\(/.test(src)) bump("javascript", 2);
 
   // A bare SQL statement is only SQL when it isn't wrapped in code punctuation.
   if (/^\s*(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+TABLE)\b/i.test(src)) {
@@ -299,6 +327,8 @@ interface Rule {
   id: string;
   severity: Severity;
   penalty: number;
+  /** When set, the rule only runs for these languages. */
+  langs?: Language[];
   run: (code: string, stats: Stats, lang: Language) => RuleHit[];
 }
 
@@ -306,11 +336,15 @@ function hit(title: string, detail: string, line?: number): RuleHit {
   return { title, detail, line };
 }
 
+/** Languages whose syntax is JavaScript, including inline `<script>` in HTML. */
+const JS_LIKE: Language[] = ["javascript", "typescript", "html"];
+
 const RULES: Rule[] = [
   {
     id: "eval",
     severity: "critical",
     penalty: 22,
+    langs: [...JS_LIKE, "php", "python", "ruby"],
     run: (code) => {
       const re = /\beval\s*\(|\bnew\s+Function\s*\(/g;
       const n = countMatches(code, re);
@@ -330,7 +364,7 @@ const RULES: Rule[] = [
     penalty: 20,
     run: (code) => {
       const re =
-        /(api[_-]?key|secret|password|passwd|token|private[_-]?key)\s*[:=]\s*['"][^'"]{6,}['"]/i;
+        /(api[_-]?key|secret|password|passwd|token|private[_-]?key)\s*(?::[^=;]{1,40})?[:=]\s*['"][^'"]{6,}['"]/i;
       if (!re.test(code)) return [];
       return [
         hit(
@@ -361,6 +395,7 @@ const RULES: Rule[] = [
     id: "innerhtml",
     severity: "high",
     penalty: 14,
+    langs: JS_LIKE,
     run: (code) => {
       const re = /\.innerHTML\s*=|dangerouslySetInnerHTML|document\.write\s*\(/g;
       const n = countMatches(code, re);
@@ -378,8 +413,10 @@ const RULES: Rule[] = [
     id: "empty-catch",
     severity: "high",
     penalty: 12,
+    langs: [...JS_LIKE, "java", "csharp", "php", "python", "ruby"],
     run: (code) => {
-      const re = /catch\s*(\([^)]*\))?\s*\{\s*\}/;
+      const re =
+        /catch\s*(\([^)]*\))?\s*\{\s*\}|except\s*:\s*(pass\b)?|rescue\b[^\n]*\n\s*end/;
       if (!re.test(code)) return [];
       return [
         hit(
@@ -394,6 +431,7 @@ const RULES: Rule[] = [
     id: "debugger",
     severity: "high",
     penalty: 10,
+    langs: JS_LIKE,
     run: (code) => {
       const re = /^\s*debugger\s*;?\s*$/m;
       if (!re.test(code)) return [];
@@ -410,6 +448,7 @@ const RULES: Rule[] = [
     id: "nesting",
     severity: "high",
     penalty: 10,
+    langs: [...JS_LIKE, "java", "csharp", "go", "rust", "php"],
     run: (_code, stats) => {
       if (stats.maxNesting < 5) return [];
       return [
@@ -424,6 +463,7 @@ const RULES: Rule[] = [
     id: "long-function",
     severity: "medium",
     penalty: 8,
+    langs: [...JS_LIKE, "java", "csharp", "go", "rust", "php"],
     run: (_code, stats) => {
       if (stats.longestFunction <= 60) return [];
       return [
@@ -438,6 +478,7 @@ const RULES: Rule[] = [
     id: "complexity",
     severity: "medium",
     penalty: 8,
+    langs: [...JS_LIKE, "java", "csharp", "go", "rust", "php", "python"],
     run: (_code, stats) => {
       if (stats.decisionPoints <= 25) return [];
       return [
@@ -452,6 +493,7 @@ const RULES: Rule[] = [
     id: "duplication",
     severity: "medium",
     penalty: 7,
+    langs: [...JS_LIKE, "java", "csharp", "go", "rust", "php", "python", "sql"],
     run: (_code, stats) => {
       if (stats.duplicateLines <= 5) return [];
       return [
@@ -466,6 +508,7 @@ const RULES: Rule[] = [
     id: "huge-file",
     severity: "medium",
     penalty: 6,
+    langs: [...JS_LIKE, "java", "csharp", "go", "rust", "php", "python", "sql", "css"],
     run: (_code, stats) => {
       if (stats.lines <= 400) return [];
       return [
@@ -480,6 +523,7 @@ const RULES: Rule[] = [
     id: "loose-equality",
     severity: "medium",
     penalty: 6,
+    langs: JS_LIKE,
     run: (code) => {
       const re = /[^=!<>]==[^=]|!=[^=]/g;
       const n = countMatches(code, re);
@@ -514,6 +558,7 @@ const RULES: Rule[] = [
     id: "var",
     severity: "medium",
     penalty: 5,
+    langs: JS_LIKE,
     run: (code) => {
       const re = /\bvar\s+\w+/g;
       const n = countMatches(code, re);
@@ -531,6 +576,7 @@ const RULES: Rule[] = [
     id: "any",
     severity: "medium",
     penalty: 5,
+    langs: ["typescript"],
     run: (code) => {
       const re = /:\s*any\b|\bas\s+any\b/g;
       const n = countMatches(code, re);
@@ -548,6 +594,7 @@ const RULES: Rule[] = [
     id: "math-random",
     severity: "medium",
     penalty: 5,
+    langs: JS_LIKE,
     run: (code) => {
       const re = /Math\.random\s*\(/g;
       const n = countMatches(code, re);
@@ -565,6 +612,7 @@ const RULES: Rule[] = [
     id: "console",
     severity: "low",
     penalty: 4,
+    langs: JS_LIKE,
     run: (code) => {
       const re = /\bconsole\.(log|debug|info)\s*\(/g;
       const n = countMatches(code, re);
@@ -579,18 +627,39 @@ const RULES: Rule[] = [
     },
   },
   {
+    id: "print-debugging",
+    severity: "low",
+    penalty: 4,
+    langs: ["go", "rust", "python", "ruby", "php", "java", "csharp"],
+    run: (code) => {
+      const re = /\b(println!|print!|fmt\.Print(f|ln)?|System\.out\.print(ln)?|Console\.Write(Line)?|print\s*\(|puts\b|echo\b)/g;
+      const n = countMatches(code, re);
+      if (n < 3) return [];
+      return [
+        hit(
+          "Print-statement debugging",
+          `${n} print calls left in. Somebody was chasing a bug and never came back for the evidence.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
     id: "commented-code",
     severity: "low",
     penalty: 4,
+    langs: [...JS_LIKE, "java", "csharp", "go", "rust", "php", "python", "ruby", "sql"],
     run: (code) => {
       const lines = code.split("\n");
       let count = 0;
       let line: number | undefined;
       for (let i = 0; i < lines.length; i++) {
         const t = lines[i].trim();
-        if (!t.startsWith("//")) continue;
-        const body = t.slice(2).trim();
-        if (/[;{}]$/.test(body) || /^\w+\s*\(.*\)\s*;?$/.test(body)) {
+        // `//`, `#` and `--` all open a line comment somewhere.
+        const m = /^(\/\/|#|--)\s*(.+)$/.exec(t);
+        if (!m) continue;
+        const body = m[2].trim();
+        if (/[;{}]$/.test(body) || /^\w+\s*\(.*\)\s*;?$/.test(body) || /^\w+\s*=\s*.+$/.test(body)) {
           count++;
           line ??= i + 1;
         }
@@ -609,6 +678,7 @@ const RULES: Rule[] = [
     id: "magic-numbers",
     severity: "low",
     penalty: 4,
+    langs: [...JS_LIKE, "java", "csharp", "go", "rust", "php", "python"],
     run: (code) => {
       const re = /(?<![\w.$])(?!0\b|1\b|-1\b)\d{2,}(?![\w.])/g;
       const n = countMatches(code, re);
@@ -643,6 +713,7 @@ const RULES: Rule[] = [
     id: "non-null",
     severity: "low",
     penalty: 3,
+    langs: ["typescript"],
     run: (code) => {
       const re = /\w+!\./g;
       const n = countMatches(code, re);
@@ -674,6 +745,7 @@ const RULES: Rule[] = [
     id: "parseint",
     severity: "low",
     penalty: 3,
+    langs: JS_LIKE,
     run: (code) => {
       const re = /parseInt\s*\(\s*[^,)]+\)/g;
       const n = countMatches(code, re);
@@ -691,6 +763,7 @@ const RULES: Rule[] = [
     id: "single-letter",
     severity: "nit",
     penalty: 2,
+    langs: JS_LIKE,
     run: (code) => {
       const re = /\b(?:const|let|var)\s+([a-z])\s*=/g;
       const names = [...code.matchAll(re)].map((m) => m[1]);
@@ -714,6 +787,437 @@ const RULES: Rule[] = [
         hit(
           "Zero comments",
           `${stats.codeLines} lines of code, not one note about why. Future you is a stranger.`,
+        ),
+      ];
+    },
+  },
+
+  /* ---------------- HTML ---------------- */
+  {
+    id: "html-doctype",
+    severity: "medium",
+    penalty: 6,
+    langs: ["html"],
+    run: (code) => {
+      if (/^\s*<!doctype\s+html/i.test(code)) return [];
+      return [
+        hit(
+          "No <!DOCTYPE html>",
+          "Without a doctype the browser drops into quirks mode and lays the page out like it is 1999.",
+          1,
+        ),
+      ];
+    },
+  },
+  {
+    id: "html-deprecated-tags",
+    severity: "high",
+    penalty: 12,
+    langs: ["html"],
+    run: (code) => {
+      const re = /<\s*(font|center|marquee|blink|big|strike|tt|frame|frameset|acronym)\b/gi;
+      const n = countMatches(code, re);
+      if (!n) return [];
+      return [
+        hit(
+          "Deprecated tags",
+          `${n} use(s) of tags the HTML spec retired years ago. CSS does this now, and has for a decade.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "html-inline-style",
+    severity: "medium",
+    penalty: 7,
+    langs: ["html"],
+    run: (code) => {
+      const re = /\sstyle\s*=\s*["'][^"']+["']/gi;
+      const n = countMatches(code, re);
+      if (n < 2) return [];
+      return [
+        hit(
+          "Inline styles",
+          `${n} style attribute(s). Every one of these beats your stylesheet in the cascade and nobody can find it later.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "html-inline-handlers",
+    severity: "high",
+    penalty: 11,
+    langs: ["html"],
+    run: (code) => {
+      const re = /\son(click|change|submit|load|error|mouseover|keyup|keydown)\s*=\s*["']/gi;
+      const n = countMatches(code, re);
+      if (!n) return [];
+      return [
+        hit(
+          "Inline event handlers",
+          `${n} on* attribute(s). This is markup pretending to be JavaScript, and it cannot be tested or removed.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "html-missing-alt",
+    severity: "medium",
+    penalty: 6,
+    langs: ["html"],
+    run: (code) => {
+      const imgs = [...code.matchAll(/<img\b[^>]*>/gi)].map((m) => m[0]);
+      const missing = imgs.filter((tag) => !/\balt\s*=/i.test(tag));
+      if (!missing.length) return [];
+      return [
+        hit(
+          "Images without alt text",
+          `${missing.length} of ${imgs.length} <img> tag(s) have no alt. Screen readers announce nothing and the page fails accessibility.`,
+          firstLineOf(code, /<img\b[^>]*>/i),
+        ),
+      ];
+    },
+  },
+  {
+    id: "html-table-layout",
+    severity: "high",
+    penalty: 10,
+    langs: ["html"],
+    run: (code) => {
+      const re = /<table\b[^>]*\brole\s*=\s*["']presentation["']|<td\b[^>]*\bwidth\s*=/gi;
+      if (!re.test(code)) return [];
+      return [
+        hit(
+          "Table-based layout",
+          "Tables are for tabular data. Using them to position a page is a 2003 technique that still breaks screen readers.",
+          firstLineOf(code, /<table\b/i),
+        ),
+      ];
+    },
+  },
+  {
+    id: "html-unclosed-void",
+    severity: "low",
+    penalty: 3,
+    langs: ["html"],
+    run: (code) => {
+      const re = /<(img|br|hr|input|meta|link)\b[^>]*\/>/gi;
+      const n = countMatches(code, re);
+      if (n < 3) return [];
+      return [
+        hit(
+          "XHTML self-closing tags",
+          `${n} tag(s) closed with "/>". Valid HTML5, but it is a tell that you learned markup in 2008.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "html-jquery-cdn",
+    severity: "medium",
+    penalty: 8,
+    langs: ["html"],
+    run: (code) => {
+      const re = /<script\b[^>]*src\s*=\s*["'][^"']*jquery[^"']*["']/gi;
+      if (!re.test(code)) return [];
+      return [
+        hit(
+          "jQuery from a CDN",
+          "You are shipping 90 KB of 2010 to query the DOM. querySelector and fetch have existed for years.",
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "html-br-spacing",
+    severity: "low",
+    penalty: 4,
+    langs: ["html"],
+    run: (code) => {
+      const re = /<br\s*\/?>\s*<br\s*\/?>/gi;
+      const n = countMatches(code, re);
+      if (!n) return [];
+      return [
+        hit(
+          "Stacked <br> for spacing",
+          `${n} double line break(s) used as layout. That is margin with extra steps and no control.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "html-missing-lang",
+    severity: "low",
+    penalty: 3,
+    langs: ["html"],
+    run: (code) => {
+      const htmlTag = code.match(/<html\b[^>]*>/i);
+      if (!htmlTag) return [];
+      if (/\blang\s*=/i.test(htmlTag[0])) return [];
+      return [
+        hit(
+          "<html> without lang",
+          "No lang attribute. Screen readers guess the pronunciation and usually guess wrong.",
+          firstLineOf(code, /<html\b/i),
+        ),
+      ];
+    },
+  },
+
+  /* ---------------- CSS ---------------- */
+  {
+    id: "css-important",
+    severity: "high",
+    penalty: 11,
+    langs: ["css"],
+    run: (code) => {
+      const re = /!important/gi;
+      const n = countMatches(code, re);
+      if (!n) return [];
+      return [
+        hit(
+          "!important everywhere",
+          `${n} use(s). Every !important is a fight you lost against your own cascade.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "css-id-selectors",
+    severity: "medium",
+    penalty: 7,
+    langs: ["css"],
+    run: (code) => {
+      const re = /(^|[\s,>+~])#[a-zA-Z][\w-]*\s*(,|\{)/gm;
+      const n = countMatches(code, re);
+      if (n < 2) return [];
+      return [
+        hit(
+          "ID selectors for styling",
+          `${n} rule(s) keyed on an id. Specificity 100 means the next developer needs !important to override you.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "css-px-units",
+    severity: "medium",
+    penalty: 6,
+    langs: ["css"],
+    run: (code) => {
+      const re: RegExp = /(?<![\w.-])\d+px\b/g;
+      const n = countMatches(code, re);
+      if (n < 6) return [];
+      return [
+        hit(
+          "Everything in px",
+          `${n} pixel value(s). Font sizes in px ignore the user's browser settings. Use rem.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "css-float-layout",
+    severity: "medium",
+    penalty: 7,
+    langs: ["css"],
+    run: (code) => {
+      const re = /\bfloat\s*:\s*(left|right)\b/gi;
+      const n = countMatches(code, re);
+      if (!n) return [];
+      return [
+        hit(
+          "float for layout",
+          `${n} float(s). Flexbox and grid shipped in 2017. You can stop clearing floats now.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "css-universal-selector",
+    severity: "low",
+    penalty: 4,
+    langs: ["css"],
+    run: (code) => {
+      const re = /(^|[\s,>+~])\*\s*[,{]/gm;
+      if (!re.test(code)) return [];
+      return [
+        hit(
+          "Universal selector",
+          "A bare * rule hits every element in the document. Fine for a reset, expensive as a habit.",
+          firstLineOf(code, /(^|[\s,>+~])\*\s*[,{]/m),
+        ),
+      ];
+    },
+  },
+  {
+    id: "css-vendor-prefix-spam",
+    severity: "low",
+    penalty: 4,
+    langs: ["css"],
+    run: (code) => {
+      const re = /-(webkit|moz|ms|o)-[a-z-]+\s*:/gi;
+      const n = countMatches(code, re);
+      if (n < 4) return [];
+      return [
+        hit(
+          "Vendor prefix spam",
+          `${n} prefixed declaration(s). Autoprefixer does this from your browserslist, by hand you will always miss one.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "css-zindex-madness",
+    severity: "medium",
+    penalty: 6,
+    langs: ["css"],
+    run: (code) => {
+      const re = /z-index\s*:\s*(\d{3,})/gi;
+      const values = [...code.matchAll(re)].map((m) => Number(m[1]));
+      if (!values.length) return [];
+      const max = Math.max(...values);
+      if (max < 999) return [];
+      return [
+        hit(
+          "z-index arms race",
+          `Highest z-index is ${max}. Someone is going to type 10000 next and the whole stack collapses.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "css-named-colors",
+    severity: "nit",
+    penalty: 2,
+    langs: ["css"],
+    run: (code) => {
+      const re = /:\s*(red|blue|green|yellow|orange|purple|pink|brown|gray|grey|cyan|magenta|lime|teal|navy|maroon|olive|silver|aqua|fuchsia)\s*;/gi;
+      const n = countMatches(code, re);
+      if (n < 3) return [];
+      return [
+        hit(
+          "Named colours",
+          `${n} keyword colour(s). "green" is not your brand green, and it never will be.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "sql-select-star",
+    severity: "medium",
+    penalty: 7,
+    langs: ["sql"],
+    run: (code) => {
+      const re = /\bSELECT\s+\*/gi;
+      const n = countMatches(code, re);
+      if (!n) return [];
+      return [
+        hit(
+          "SELECT *",
+          `${n} query/queries pull every column. You are shipping blobs you never read and breaking the day a column is added.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "sql-no-where",
+    severity: "high",
+    penalty: 12,
+    langs: ["sql"],
+    run: (code) => {
+      const re = /\b(UPDATE|DELETE)\s+(?!.*\bWHERE\b)[^;]*;/gi;
+      const n = countMatches(code, re);
+      if (!n) return [];
+      return [
+        hit(
+          "UPDATE/DELETE without WHERE",
+          `${n} statement(s) touch every row in the table. One missing WHERE is all it takes to become a headline.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "sql-leading-wildcard",
+    severity: "medium",
+    penalty: 6,
+    langs: ["sql"],
+    run: (code) => {
+      const re = /\bLIKE\s+'%/gi;
+      const n = countMatches(code, re);
+      if (!n) return [];
+      return [
+        hit(
+          "Leading-wildcard LIKE",
+          `${n} LIKE '%...' predicate(s). No index can help you here, so this is a full table scan wearing a query costume.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "sql-cartesian-join",
+    severity: "high",
+    penalty: 11,
+    langs: ["sql"],
+    run: (code) => {
+      const re = /\bFROM\s+\w+\s+\w+\s*,\s*\w+\s+\w+/i;
+      if (!re.test(code)) return [];
+      return [
+        hit(
+          "Comma join",
+          "Tables are joined with commas in the FROM clause. That is an implicit cross join waiting to multiply your row count.",
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "sql-n-plus-one",
+    severity: "medium",
+    penalty: 8,
+    langs: ["sql"],
+    run: (code) => {
+      const re = /\bSELECT\b[^;]*\bWHERE\s+\w+_id\s*=\s*\d+\s*;/gi;
+      const n = countMatches(code, re);
+      if (n < 3) return [];
+      return [
+        hit(
+          "N+1 query pattern",
+          `${n} near-identical single-row lookups. That is a loop wearing a database hat — join once instead.`,
+          firstLineOf(code, re),
+        ),
+      ];
+    },
+  },
+  {
+    id: "sql-sensitive-columns",
+    severity: "high",
+    penalty: 10,
+    langs: ["sql"],
+    run: (code) => {
+      const re = /\bSELECT\b[^;]*\b(password|passwd|api_key|secret|token|ssn)\b/gi;
+      if (!re.test(code)) return [];
+      return [
+        hit(
+          "Sensitive columns in the projection",
+          "The query returns passwords or keys. Nothing downstream needs them, and everything downstream logs them.",
+          firstLineOf(code, re),
         ),
       ];
     },
@@ -783,6 +1287,9 @@ export function analyze(code: string, hint?: Language): RoastResult {
 
   const findings: Finding[] = [];
   for (const rule of RULES) {
+    // An undetected snippet keeps every rule: silently dropping rules because
+    // detection failed would under-report, which is worse than a stray finding.
+    if (rule.langs && language !== "unknown" && !rule.langs.includes(language)) continue;
     for (const h of rule.run(trimmed, stats, language)) {
       findings.push({
         id: rule.id,
