@@ -2,6 +2,8 @@
 
 Paste your code, get a score out of 100, a letter grade, and a list of every crime it commits.
 
+**[Try it live →](https://akmglobaltech.github.io/coderroast/)**
+
 **100% client-side.** No API keys, no accounts, no uploads, no telemetry. Your code never leaves the browser tab.
 
 ## Why it exists
