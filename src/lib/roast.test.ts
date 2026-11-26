@@ -468,3 +468,85 @@ describe("shareText", () => {
     expect(shareText(analyze("const x = eval(y);"))).not.toMatch(/:\s*$/);
   });
 });
+
+describe("category breakdown", () => {
+  const DIRTY = `var password = "hunter2";
+eval("2+2");
+if (x == 1) { console.log(x) }
+`;
+
+  it("gives every finding a category and a fix", () => {
+    const result = analyze(DIRTY);
+    expect(result.findings.length).toBeGreaterThan(0);
+    for (const f of result.findings) {
+      expect(f.fix.length).toBeGreaterThan(10);
+      expect([
+        "security",
+        "correctness",
+        "performance",
+        "maintainability",
+        "accessibility",
+        "style",
+      ]).toContain(f.category);
+    }
+  });
+
+  it("always returns all six categories", () => {
+    const result = analyze(DIRTY);
+    expect(result.categories).toHaveLength(6);
+    expect(new Set(result.categories.map((c) => c.category)).size).toBe(6);
+  });
+
+  it("sorts categories worst-first", () => {
+    const scores = analyze(DIRTY).categories.map((c) => c.score);
+    expect([...scores].sort((a, b) => a - b)).toEqual(scores);
+  });
+
+  it("counts findings per category", () => {
+    const result = analyze(DIRTY);
+    const total = result.categories.reduce((sum, c) => sum + c.count, 0);
+    expect(total).toBe(result.findings.length);
+  });
+
+  it("reports recoverable as the points left on the table", () => {
+    const result = analyze(DIRTY);
+    expect(result.recoverable).toBe(100 - result.score);
+  });
+
+  it("gives an empty result a perfect breakdown", () => {
+    const result = analyze("");
+    expect(result.recoverable).toBe(0);
+    expect(result.categories).toHaveLength(6);
+    for (const c of result.categories) {
+      expect(c.score).toBe(100);
+      expect(c.count).toBe(0);
+      expect(c.penalty).toBe(0);
+    }
+  });
+
+  it("puts a hardcoded secret in security", () => {
+    const result = analyze(`const apiKey = "sk_live_9f8a7b6c5d4e3f2a1b0c";`);
+    const secret = result.findings.find((f) => f.id === "secret");
+    expect(secret?.category).toBe("security");
+  });
+
+  it("puts a missing alt attribute in accessibility", () => {
+    const result = analyze(`<img src="a.png">`);
+    const alt = result.findings.find((f) => f.id === "html-missing-alt");
+    expect(alt?.category).toBe("accessibility");
+  });
+
+  it("puts SELECT * in performance", () => {
+    const result = analyze(`SELECT * FROM users WHERE id = 1;`);
+    const star = result.findings.find((f) => f.id === "sql-select-star");
+    expect(star?.category).toBe("performance");
+  });
+
+  it("caps a category penalty the same way the total is capped", () => {
+    const result = analyze(DIRTY);
+    for (const c of result.categories) {
+      expect(c.penalty).toBeGreaterThanOrEqual(0);
+      expect(c.score).toBe(Math.max(0, 100 - c.penalty));
+    }
+  });
+});

@@ -1,13 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnalyzingBadge, CodeSpinner, LiveBadge, ScanBar } from "./components/Analyzing";
+import CategoryPanel from "./components/CategoryPanel";
 import ChallengeBar from "./components/ChallengeBar";
+import ExportBar from "./components/ExportBar";
 import FindingsList from "./components/FindingsList";
 import GitHubLoader from "./components/GitHubLoader";
+import HistoryPanel from "./components/HistoryPanel";
 import ScoreCard from "./components/ScoreCard";
 import ShareBar from "./components/ShareBar";
 import StatsPanel from "./components/StatsPanel";
+import {
+  appendEntry,
+  clearHistory,
+  loadHistory,
+  saveHistory,
+  summarize,
+  type HistoryEntry,
+} from "./lib/history";
 import { readRoastHash } from "./lib/permalink";
-import { normalizeCode, shareText, type Language } from "./lib/roast";
+import { normalizeCode, shareText, type Category, type Language } from "./lib/roast";
 import { SAMPLES } from "./lib/samples";
 import { useLiveRoast } from "./lib/useLiveRoast";
 
@@ -37,6 +48,8 @@ export default function App() {
   const [code, setCode] = useState("");
   const [language, setLanguage] = useState<Language | "auto">("auto");
   const [copied, setCopied] = useState(false);
+  const [filter, setFilter] = useState<Category | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
   const resultsRef = useRef<HTMLDivElement>(null);
 
   // A shared challenge arrives in the hash, so it is never sent to a server.
@@ -59,10 +72,30 @@ export default function App() {
     if (window.location.hash) {
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
     }
+    setFilter(null);
     setCode(next);
   };
 
   const { result, pending, flush } = useLiveRoast(code, language);
+
+  // Record a settled roast. `appendEntry` ignores repeats, so typing does not
+  // flood the list with forty identical rows.
+  useEffect(() => {
+    if (pending || !result || result.empty) return;
+    setHistory((prev) => {
+      const next = appendEntry(prev, result, code, Date.now());
+      if (next === prev) return prev;
+      saveHistory(next);
+      return next;
+    });
+  }, [result, pending, code]);
+
+  const historySummary = useMemo(() => summarize(history), [history]);
+
+  const onClearHistory = () => {
+    clearHistory();
+    setHistory([]);
+  };
 
   const charCount = code.length;
   const lineCount = useMemo(
@@ -240,17 +273,32 @@ export default function App() {
 
               <StatsPanel stats={result.stats} />
 
+              <CategoryPanel
+                categories={result.categories}
+                active={filter}
+                onSelect={setFilter}
+              />
+
               <div>
                 <h2 className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-white/35">
                   Crimes
                   <span className="rounded bg-white/5 px-1.5 py-0.5 text-white/50">
-                    {result.findings.length}
+                    {filter
+                      ? `${result.findings.filter((f) => f.category === filter).length}/${result.findings.length}`
+                      : result.findings.length}
                   </span>
+                  {result.recoverable > 0 && (
+                    <span className="ml-auto normal-case tracking-normal text-white/25">
+                      {result.recoverable} pts recoverable
+                    </span>
+                  )}
                 </h2>
                 <div className="scroll-thin max-h-[520px] overflow-y-auto pr-1">
-                  <FindingsList findings={result.findings} />
+                  <FindingsList findings={result.findings} filter={filter} />
                 </div>
               </div>
+
+              <ExportBar result={result} baseUrl={appUrl()} />
             </>
           )}
 
@@ -259,6 +307,8 @@ export default function App() {
               {result.verdict}
             </div>
           )}
+
+          <HistoryPanel entries={history} summary={historySummary} onClear={onClearHistory} />
         </section>
       </div>
 

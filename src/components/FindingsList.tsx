@@ -1,4 +1,4 @@
-import { SEVERITY_LABEL, type Finding, type Severity } from "../lib/roast";
+import { SEVERITY_LABEL, type Category, type Finding, type Severity } from "../lib/roast";
 
 const SEVERITY_STYLE: Record<Severity, { dot: string; text: string; ring: string }> = {
   critical: { dot: "bg-[#ff2d55]", text: "text-[#ff6b8a]", ring: "border-[#ff2d55]/35" },
@@ -10,9 +10,13 @@ const SEVERITY_STYLE: Record<Severity, { dot: string; text: string; ring: string
 
 interface Props {
   findings: Finding[];
+  /** When set, only findings in this category are shown. */
+  filter?: Category | null;
 }
 
-export default function FindingsList({ findings }: Props) {
+export default function FindingsList({ findings, filter = null }: Props) {
+  const shown = filter ? findings.filter((f) => f.category === filter) : findings;
+
   if (findings.length === 0) {
     return (
       <div className="rounded-2xl border border-emerald-400/25 bg-emerald-400/5 p-6 text-center">
@@ -24,9 +28,17 @@ export default function FindingsList({ findings }: Props) {
     );
   }
 
+  if (shown.length === 0) {
+    return (
+      <div className="rounded-2xl border border-ink-line bg-ink-soft/60 p-6 text-center">
+        <p className="text-sm text-white/50">No findings in this category.</p>
+      </div>
+    );
+  }
+
   return (
     <ul className="space-y-2.5">
-      {findings.map((f, i) => {
+      {shown.map((f, i) => {
         const style = SEVERITY_STYLE[f.severity];
         return (
           <li
@@ -50,6 +62,15 @@ export default function FindingsList({ findings }: Props) {
                   <span className="ml-auto font-mono text-[10px] text-white/25">-{f.penalty}</span>
                 </div>
                 <p className="mt-1.5 text-[13px] leading-relaxed text-white/55">{f.detail}</p>
+                <p className="mt-2 flex gap-2 text-[12px] leading-relaxed text-emerald-300/75">
+                  <span
+                    aria-hidden
+                    className="shrink-0 pt-0.5 font-mono text-[10px] font-bold tracking-wider text-emerald-400/60"
+                  >
+                    FIX
+                  </span>
+                  <span>{f.fix}</span>
+                </p>
               </div>
             </div>
           </li>

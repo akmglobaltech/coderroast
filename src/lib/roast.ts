@@ -22,6 +22,14 @@ export type Language =
   | "css"
   | "unknown";
 
+export type Category =
+  | "security"
+  | "correctness"
+  | "performance"
+  | "maintainability"
+  | "accessibility"
+  | "style";
+
 export interface Finding {
   id: string;
   severity: Severity;
@@ -29,6 +37,19 @@ export interface Finding {
   detail: string;
   line?: number;
   penalty: number;
+  category: Category;
+  /** One concrete sentence on how to make this finding go away. */
+  fix: string;
+}
+
+export interface CategoryScore {
+  category: Category;
+  label: string;
+  /** Points lost to this category, after the per-severity caps. */
+  penalty: number;
+  count: number;
+  /** 0–100 health for this category alone. */
+  score: number;
 }
 
 export interface Stats {
@@ -53,6 +74,10 @@ export interface RoastResult {
   stats: Stats;
   language: Language;
   empty: boolean;
+  /** Per-category breakdown, always all six categories, worst first. */
+  categories: CategoryScore[];
+  /** Points recoverable by fixing everything, i.e. 100 - score. */
+  recoverable: number;
 }
 
 export const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "nit"];
@@ -1228,6 +1253,241 @@ const RULES: Rule[] = [
 ];
 
 /* ------------------------------------------------------------------ */
+/* rule metadata                                                       */
+/* ------------------------------------------------------------------ */
+
+export const CATEGORY_LABEL: Record<Category, string> = {
+  security: "Security",
+  correctness: "Correctness",
+  performance: "Performance",
+  maintainability: "Maintainability",
+  accessibility: "Accessibility",
+  style: "Style",
+};
+
+export const CATEGORY_ORDER: Category[] = [
+  "security",
+  "correctness",
+  "performance",
+  "maintainability",
+  "accessibility",
+  "style",
+];
+
+/**
+ * Category and remediation advice live here rather than on each rule so the
+ * rule bodies stay about detection. Every rule id must have an entry — the
+ * test suite asserts that, so a new rule cannot ship without a fix hint.
+ */
+const RULE_META: Record<string, { category: Category; fix: string }> = {
+  eval: {
+    category: "security",
+    fix: "Replace eval() with JSON.parse for data, or a lookup table of allowed functions for behaviour.",
+  },
+  secret: {
+    category: "security",
+    fix: "Move the value into an environment variable, rotate the leaked credential, and purge it from git history.",
+  },
+  "sql-injection": {
+    category: "security",
+    fix: "Use a parameterised query — pass the value as a bound parameter instead of concatenating it into the SQL.",
+  },
+  innerhtml: {
+    category: "security",
+    fix: "Assign textContent for plain text, or sanitise with DOMPurify before touching innerHTML.",
+  },
+  "empty-catch": {
+    category: "correctness",
+    fix: "Log the error, rethrow it, or handle it — an empty catch turns a bug into a mystery.",
+  },
+  debugger: {
+    category: "correctness",
+    fix: "Delete the debugger statement; use a conditional breakpoint in devtools instead.",
+  },
+  nesting: {
+    category: "maintainability",
+    fix: "Extract the inner block into a named function, or invert the condition and return early.",
+  },
+  "long-function": {
+    category: "maintainability",
+    fix: "Split the function along its comment boundaries — each block usually wants to be its own function.",
+  },
+  complexity: {
+    category: "maintainability",
+    fix: "Replace the if/else ladder with a lookup table or a switch, and move each branch into a function.",
+  },
+  duplication: {
+    category: "maintainability",
+    fix: "Pull the repeated lines into one helper and call it from both places.",
+  },
+  "huge-file": {
+    category: "maintainability",
+    fix: "Split the file by responsibility — one module per concept, then re-export from an index.",
+  },
+  "loose-equality": {
+    category: "correctness",
+    fix: "Use === and !== so the comparison does not silently coerce types.",
+  },
+  http: {
+    category: "security",
+    fix: "Switch the URL to https:// — plaintext HTTP leaks the request and the response.",
+  },
+  var: {
+    category: "correctness",
+    fix: "Use const by default, and let only when the binding is reassigned.",
+  },
+  any: {
+    category: "correctness",
+    fix: "Give the value a real type, or use unknown and narrow it before use.",
+  },
+  "math-random": {
+    category: "security",
+    fix: "Use crypto.randomUUID() or crypto.getRandomValues() for anything security-relevant.",
+  },
+  console: {
+    category: "style",
+    fix: "Remove the console call, or route it through a logger that can be switched off in production.",
+  },
+  "print-debugging": {
+    category: "style",
+    fix: "Delete the print statement, or replace it with the language's logging framework at debug level.",
+  },
+  "commented-code": {
+    category: "maintainability",
+    fix: "Delete the commented-out block — git already remembers it, and nobody trusts code in a comment.",
+  },
+  "magic-numbers": {
+    category: "maintainability",
+    fix: "Name the number in a const so the next reader knows what it means.",
+  },
+  todo: {
+    category: "maintainability",
+    fix: "Turn the TODO into a tracked issue and link it, or finish the work.",
+  },
+  "non-null": {
+    category: "correctness",
+    fix: "Handle the null case explicitly instead of asserting it away with !.",
+  },
+  "long-lines": {
+    category: "style",
+    fix: "Break the line at a natural boundary, or extract the long expression into a named variable.",
+  },
+  parseint: {
+    category: "correctness",
+    fix: "Always pass the radix: parseInt(value, 10).",
+  },
+  "single-letter": {
+    category: "style",
+    fix: "Rename the variable to say what it holds — except for loop indices, where i is fine.",
+  },
+  "no-comments": {
+    category: "maintainability",
+    fix: "Add a short comment above each non-obvious block explaining why, not what.",
+  },
+  "html-doctype": {
+    category: "correctness",
+    fix: "Start the document with <!DOCTYPE html> so browsers use standards mode.",
+  },
+  "html-deprecated-tags": {
+    category: "style",
+    fix: "Replace the deprecated tag with its CSS equivalent — <center> becomes text-align, <font> becomes font-family.",
+  },
+  "html-inline-style": {
+    category: "maintainability",
+    fix: "Move the declarations into a stylesheet class and apply the class instead.",
+  },
+  "html-inline-handlers": {
+    category: "security",
+    fix: "Attach the handler with addEventListener in a script instead of an onclick attribute.",
+  },
+  "html-missing-alt": {
+    category: "accessibility",
+    fix: "Add alt text describing the image, or alt=\"\" if it is purely decorative.",
+  },
+  "html-table-layout": {
+    category: "accessibility",
+    fix: "Lay the page out with flexbox or grid; reserve <table> for tabular data.",
+  },
+  "html-unclosed-void": {
+    category: "style",
+    fix: "Write void elements as <br> and <img>, without the XHTML trailing slash.",
+  },
+  "html-jquery-cdn": {
+    category: "performance",
+    fix: "Drop jQuery for the handful of methods you use, or bundle it locally instead of a CDN.",
+  },
+  "html-br-spacing": {
+    category: "style",
+    fix: "Use margin or padding for spacing instead of stacked <br> tags.",
+  },
+  "html-missing-lang": {
+    category: "accessibility",
+    fix: "Add a lang attribute to <html> so screen readers pick the right pronunciation.",
+  },
+  "css-important": {
+    category: "maintainability",
+    fix: "Raise specificity with a real selector instead of forcing it with !important.",
+  },
+  "css-id-selectors": {
+    category: "maintainability",
+    fix: "Style with classes — IDs are unique, unreusable, and hard to override.",
+  },
+  "css-px-units": {
+    category: "accessibility",
+    fix: "Use rem for font sizes and spacing so the layout respects the user's browser font setting.",
+  },
+  "css-float-layout": {
+    category: "maintainability",
+    fix: "Use flexbox or grid for layout; float is for wrapping text around an image.",
+  },
+  "css-universal-selector": {
+    category: "performance",
+    fix: "Target the elements you actually mean instead of * — it forces the browser to walk the whole tree.",
+  },
+  "css-vendor-prefix-spam": {
+    category: "maintainability",
+    fix: "Let Autoprefixer add prefixes at build time instead of hand-writing them.",
+  },
+  "css-zindex-madness": {
+    category: "maintainability",
+    fix: "Define a small set of z-index tokens and use those, instead of escalating numbers.",
+  },
+  "css-named-colors": {
+    category: "style",
+    fix: "Use the design system's colour tokens so the palette stays consistent.",
+  },
+  "sql-select-star": {
+    category: "performance",
+    fix: "List the columns you need — SELECT * breaks when the schema changes and reads more than it must.",
+  },
+  "sql-no-where": {
+    category: "correctness",
+    fix: "Add a WHERE clause, or wrap the statement in a transaction you can roll back.",
+  },
+  "sql-leading-wildcard": {
+    category: "performance",
+    fix: "Drop the leading % so the index can be used, or switch to a full-text search index.",
+  },
+  "sql-cartesian-join": {
+    category: "performance",
+    fix: "Use an explicit JOIN ... ON so the planner does not build a cartesian product.",
+  },
+  "sql-n-plus-one": {
+    category: "performance",
+    fix: "Fetch the rows in one query with an IN (...) or a join, instead of one query per id.",
+  },
+  "sql-sensitive-columns": {
+    category: "security",
+    fix: "Select only the columns the caller needs — never project passwords or keys.",
+  },
+};
+
+const FALLBACK_META: { category: Category; fix: string } = {
+  category: "maintainability",
+  fix: "Read the finding and address it directly.",
+};
+
+/* ------------------------------------------------------------------ */
 /* scoring                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -1285,6 +1545,14 @@ export function analyze(code: string, hint?: Language): RoastResult {
       stats,
       language,
       empty: true,
+      categories: CATEGORY_ORDER.map((category) => ({
+        category,
+        label: CATEGORY_LABEL[category],
+        penalty: 0,
+        count: 0,
+        score: 100,
+      })),
+      recoverable: 0,
     };
   }
 
@@ -1295,6 +1563,7 @@ export function analyze(code: string, hint?: Language): RoastResult {
     // language-agnostic rules run — a stray HTML finding on JavaScript is
     // worse than a missed one.
     if (rule.langs && !rule.langs.includes(language)) continue;
+    const meta = RULE_META[rule.id] ?? FALLBACK_META;
     for (const h of rule.run(trimmed, stats, language)) {
       findings.push({
         id: rule.id,
@@ -1303,6 +1572,8 @@ export function analyze(code: string, hint?: Language): RoastResult {
         detail: h.detail,
         line: h.line,
         penalty: rule.penalty,
+        category: meta.category,
+        fix: meta.fix,
       });
     }
   }
@@ -1332,6 +1603,31 @@ export function analyze(code: string, hint?: Language): RoastResult {
   const pool = HEADLINES[grade];
   const headline = pool[score % pool.length];
 
+  // Category health is scored with the same per-severity caps, so a category
+  // with one critical reads as badly as the overall score would.
+  const categories: CategoryScore[] = CATEGORY_ORDER.map((category) => {
+    const own = findings.filter((f) => f.category === category);
+    const bySeverity: Record<Severity, number> = {
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+      nit: 0,
+    };
+    for (const f of own) bySeverity[f.severity] += f.penalty;
+    let penalty = 0;
+    for (const severity of SEVERITY_ORDER) {
+      penalty += Math.min(bySeverity[severity], SEVERITY_CAP[severity]);
+    }
+    return {
+      category,
+      label: CATEGORY_LABEL[category],
+      penalty,
+      count: own.length,
+      score: Math.max(0, 100 - penalty),
+    };
+  }).sort((a, b) => a.score - b.score || b.count - a.count);
+
   return {
     score,
     grade,
@@ -1341,6 +1637,8 @@ export function analyze(code: string, hint?: Language): RoastResult {
     stats,
     language,
     empty: false,
+    categories,
+    recoverable: 100 - score,
   };
 }
 
