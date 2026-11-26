@@ -22,6 +22,7 @@ Code review tools are either enterprise-priced or they want your repository. Cod
 - **Per-language samples** — "Load sample" loads a genuinely bad snippet in the selected language
 - **Metrics panel** — nesting depth, longest function, branch count, duplication, comment ratio
 - **Shareable PNG card** — 1200×630, rendered on canvas, ready for social
+- **Share anywhere** — native share sheet with the image attached, copy the image to the clipboard, download the PNG, or post the link to X, LinkedIn, WhatsApp, Telegram, Reddit, Facebook, and Hacker News
 - **Copy-to-clipboard** summary
 - **Keyboard-first** — `Ctrl`/`Cmd` + `Enter` to jump to the results
 
@@ -84,11 +85,15 @@ src/
     useLiveRoast.ts # debounced live-analysis hook (worker + watchdog fallback)
     samples.ts      # one deliberately bad sample per language
     roast.test.ts   # engine tests
-    share.ts        # canvas renderer for the shareable PNG card
+    share.ts        # canvas renderer + share/clipboard/download helpers
+    shareTargets.ts # per-platform share intent URLs
+    shareTargets.test.ts
   components/
     ScoreCard.tsx   # score ring, grade badge, headline
     FindingsList.tsx# severity-coloured findings
     StatsPanel.tsx  # metrics grid
+    Analyzing.tsx   # coding-themed spinner, live badge, scan bar
+    ShareBar.tsx    # share sheet, clipboard, download, platform links
   App.tsx           # editor + results layout
   main.tsx          # React root
   index.css         # Tailwind import + theme
@@ -143,6 +148,40 @@ The score, grade, findings, and metrics recompute as you type. The pipeline:
 The worker is a module-level singleton rather than a per-component one, because React StrictMode's mount/unmount cycle would otherwise terminate a worker with a request still in flight.
 
 `analyze()` is fast enough that the worker is mostly insurance: ~0.4 ms for a small snippet and ~22 ms for 300 lines.
+
+## Sharing
+
+The card is a 1200×630 PNG rendered on a canvas in `src/lib/share.ts`. Getting that image onto another platform runs into one hard browser constraint: **no web page can push a file into another site's compose box.** The share intent URLs (`twitter.com/intent/tweet`, `linkedin.com/sharing/share-offsite`, …) accept text and a URL, nothing else. So the image travels by one of three routes:
+
+| Route | API | Where it lands | Support |
+| --- | --- | --- | --- |
+| **Native share sheet** | `navigator.share({ files })` — Web Share API Level 2 | WhatsApp, Telegram, Instagram, iMessage, Slack, Mail, AirDrop, any installed app | Chrome/Edge (desktop + Android), Safari 15+ (iOS + macOS). **Not Firefox desktop.** |
+| **Clipboard** | `navigator.clipboard.write([new ClipboardItem({ "image/png": blob })])` | Paste into X, LinkedIn, Slack, Discord, Docs, anywhere | Chrome, Edge, Safari. **Not Firefox.** |
+| **Link unfurl** | Open Graph + Twitter Card meta tags in `index.html` | The preview image on any platform where the *link* is posted | Everywhere |
+
+`ShareBar` (`src/components/ShareBar.tsx`) renders whichever of the first two the browser supports, plus a download button that always works, plus the seven platform intent links.
+
+### Why the card is pre-rendered
+
+`navigator.share()` must be called while the user gesture is still live. Awaiting a canvas encode inside the click handler burns that activation in Chrome and the call throws `NotAllowedError`. So `ShareBar` renders the PNG 300 ms after the result settles, keeps the `Blob` in state, and the click handler calls `navigator.share()` immediately with the already-built `File`.
+
+### The OG image
+
+`public/og.jpg` is a static 1200×630 marketing card (72 KB) referenced by absolute URL in `index.html`. It is what X, LinkedIn, Slack, Discord, and iMessage show when someone posts the link. Regenerate it by rendering a canvas at 1200×630 and saving the result over `public/og.jpg`; keep it under ~300 KB so unfurlers fetch it reliably.
+
+### Adding a platform
+
+Add an entry to `SHARE_TARGETS` in `src/lib/shareTargets.ts`:
+
+```ts
+{
+  id: "mastodon",
+  label: "Mastodon",
+  href: (text, url) => `https://mastodon.social/share?text=${enc(`${text} ${url}`)}`,
+}
+```
+
+`shareTargets.test.ts` asserts every target is https-only, has a unique id, and encodes reserved characters, so a malformed URL fails CI rather than shipping.
 
 ## Adding a sample
 

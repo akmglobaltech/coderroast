@@ -2,10 +2,10 @@ import { useMemo, useRef, useState } from "react";
 import { AnalyzingBadge, CodeSpinner, LiveBadge, ScanBar } from "./components/Analyzing";
 import FindingsList from "./components/FindingsList";
 import ScoreCard from "./components/ScoreCard";
+import ShareBar from "./components/ShareBar";
 import StatsPanel from "./components/StatsPanel";
 import { normalizeCode, shareText, type Language } from "./lib/roast";
 import { SAMPLES } from "./lib/samples";
-import { renderShareCard } from "./lib/share";
 import { useLiveRoast } from "./lib/useLiveRoast";
 
 const LANGUAGES: Array<{ value: Language | "auto"; label: string }> = [
@@ -56,18 +56,6 @@ export default function App() {
       e.preventDefault();
       reveal();
     }
-  };
-
-  const download = async () => {
-    if (!result) return;
-    const blob = await renderShareCard(result);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `coderroast-${result.score}-${result.grade}.png`;
-    a.click();
-    // Revoking synchronously can cancel the download in Firefox/Safari.
-    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
   };
 
   const copy = async () => {
@@ -203,22 +191,12 @@ export default function App() {
             <>
               <ScoreCard result={result} pending={pending} />
 
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={download}
-                  className="flex-1 rounded-lg border border-flame/40 bg-flame/10 px-4 py-2.5 text-xs font-semibold text-flame transition hover:bg-flame/20"
-                >
-                  Download share card
-                </button>
-                <button
-                  type="button"
-                  onClick={copy}
-                  className="flex-1 rounded-lg border border-ink-line bg-ink-soft px-4 py-2.5 text-xs font-semibold text-white/70 transition hover:border-white/25 hover:text-white"
-                >
-                  {copied ? "Copied ✓" : "Copy result"}
-                </button>
-              </div>
+              <ShareBar
+                result={result}
+                url={appUrl()}
+                onCopyText={copy}
+                copied={copied}
+              />
 
               <StatsPanel stats={result.stats} />
 

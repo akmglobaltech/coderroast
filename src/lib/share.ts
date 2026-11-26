@@ -119,6 +119,80 @@ export async function renderShareCard(result: RoastResult): Promise<Blob> {
   });
 }
 
+export function cardFileName(result: RoastResult): string {
+  return `coderroast-${result.score}-${result.grade}.png`;
+}
+
+function toFile(blob: Blob, name: string): File {
+  return new File([blob], name, { type: "image/png" });
+}
+
+/** Web Share API Level 2 — the only way to hand a real image to a native share sheet. */
+export function canShareFiles(blob: Blob, name: string): boolean {
+  if (typeof navigator === "undefined") return false;
+  if (typeof navigator.share !== "function" || typeof navigator.canShare !== "function") {
+    return false;
+  }
+  try {
+    return navigator.canShare({ files: [toFile(blob, name)] });
+  } catch {
+    return false;
+  }
+}
+
+export type ShareOutcome = "shared" | "cancelled" | "unsupported";
+
+/**
+ * Opens the OS share sheet with the card attached. Must be called from a user
+ * gesture — the transient activation survives a short `await`, not a long one.
+ */
+export async function shareCard(
+  blob: Blob,
+  name: string,
+  text: string,
+  url: string,
+): Promise<ShareOutcome> {
+  const file = toFile(blob, name);
+  if (!canShareFiles(blob, name)) return "unsupported";
+  try {
+    await navigator.share({ files: [file], text, url, title: "CodeRoast" });
+    return "shared";
+  } catch (err) {
+    // The user dismissing the sheet is not a failure.
+    if (err instanceof DOMException && err.name === "AbortError") return "cancelled";
+    return "unsupported";
+  }
+}
+
+export function canCopyImage(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    typeof ClipboardItem !== "undefined" &&
+    typeof navigator.clipboard?.write === "function"
+  );
+}
+
+/** Puts the PNG on the clipboard so it can be pasted into Slack, Discord or X. */
+export async function copyCardImage(blob: Blob): Promise<boolean> {
+  if (!canCopyImage()) return false;
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function downloadCard(blob: Blob, name: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  // Revoking synchronously can cancel the download in Firefox/Safari.
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 function wrapText(
   ctx: CanvasRenderingContext2D,
   text: string,
