@@ -24,6 +24,9 @@ Code review tools are either enterprise-priced or they want your repository. Cod
 - **Shareable PNG card** — 1200×630, rendered on canvas, ready for social
 - **Share anywhere** — native share sheet with the image attached, copy the image to the clipboard, download the PNG, or post the link to X, LinkedIn, WhatsApp, Telegram, Reddit, Facebook, and Hacker News
 - **Copy-to-clipboard** summary
+- **Challenge links** — the code and language are compressed into the URL hash, so a shared link reopens the exact roast. The hash never reaches a server.
+- **README badges** — a self-contained SVG badge with your score baked in, plus ready-made markdown
+- **Roast a GitHub file** — paste a public `github.com` file URL and roast it without leaving the page
 - **Keyboard-first** — `Ctrl`/`Cmd` + `Enter` to jump to the results
 
 ## Rules
@@ -88,12 +91,20 @@ src/
     share.ts        # canvas renderer + share/clipboard/download helpers
     shareTargets.ts # per-platform share intent URLs
     shareTargets.test.ts
+    permalink.ts    # compress code+language into a URL hash, and back
+    permalink.test.ts
+    badge.ts        # self-contained SVG score badge + markdown
+    badge.test.ts
+    github.ts       # parse a GitHub file URL and fetch it from the browser
+    github.test.ts
   components/
     ScoreCard.tsx   # score ring, grade badge, headline
     FindingsList.tsx# severity-coloured findings
     StatsPanel.tsx  # metrics grid
     Analyzing.tsx   # coding-themed spinner, live badge, scan bar
     ShareBar.tsx    # share sheet, clipboard, download, platform links
+    ChallengeBar.tsx# challenge link, badge download, badge markdown
+    GitHubLoader.tsx# "Roast a repo file" URL input + fetch
   App.tsx           # editor + results layout
   main.tsx          # React root
   index.css         # Tailwind import + theme
@@ -182,6 +193,53 @@ Add an entry to `SHARE_TARGETS` in `src/lib/shareTargets.ts`:
 ```
 
 `shareTargets.test.ts` asserts every target is https-only, has a unique id, and encodes reserved characters, so a malformed URL fails CI rather than shipping.
+
+## Challenge links
+
+A challenge link reopens the exact roast — same code, same language, same score — without a database.
+
+The payload lives in the **URL hash** (`#r=…`), not the query string. Browsers never send the hash to a server, so a shared roast keeps the "nothing is uploaded" promise even though the code is in the URL.
+
+`src/lib/permalink.ts` compresses `{ c: code, l: language }` with `lz-string`'s `compressToEncodedURIComponent`, which is URL-safe and roughly 3–4× smaller than base64 of the raw text. A 54-character snippet becomes a 114-character hash.
+
+```ts
+encodeRoast(code, language)   // string | null  — null when code is empty or > MAX_LINK_CODE
+decodeRoast(payload)          // RoastLink | null — never throws
+buildRoastUrl(base, code, lang)
+readRoastHash(hash)           // requires the "#r=" prefix
+challengeText(result, url)    // the taunting message that goes with the link
+```
+
+`MAX_LINK_CODE` is 12,000 characters. Past that the button disables itself, because chat clients truncate long URLs and a half-link is worse than no link.
+
+`App.tsx` hydrates from the hash on mount and on `hashchange`, so back/forward works. The first edit drops the hash via `history.replaceState`, so a reload never resurrects code the visitor has already changed.
+
+## Badges
+
+`src/lib/badge.ts` renders a shields-style SVG locally — no shields.io round-trip, so it works offline and leaks nothing:
+
+```ts
+badgeSvg(result)                        // the SVG source
+badgeDataUri(result)                    // data:image/svg+xml,… for inline use
+badgeMarkdown(result, "coderroast.svg") // ![CodeRoast 67/100 C](coderroast.svg)
+badgeFileName(result)                   // coderroast-67-C.svg
+```
+
+The score is baked into the SVG, which makes it a **static snapshot**: commit it and it keeps showing the score from the day you generated it. That is the honest trade-off for staying serverless — a live badge would need a server to re-run the analysis on every image request.
+
+## Roasting a GitHub file
+
+`src/lib/github.ts` accepts three shapes and normalises them to `{ owner, repo, ref, path }`:
+
+- `https://github.com/owner/repo/blob/main/src/app.ts`
+- `https://raw.githubusercontent.com/owner/repo/main/src/app.ts`
+- `owner/repo/src/app.ts`
+
+`#L10-L40` fragments and `?plain=1` queries are stripped. The file is fetched through `api.github.com/repos/{owner}/{repo}/contents/{path}`, not `raw.githubusercontent.com`, because the contents API reports `size`, `type`, and `encoding` — so folders and oversize files are rejected before the body is downloaded.
+
+`MAX_FILE_BYTES` is 200,000. Base64 is decoded through `Uint8Array` + `TextDecoder` so UTF-8 source (emoji, accented identifiers, CJK comments) survives intact.
+
+The request is **unauthenticated**, so it is capped at 60 requests per hour per IP. `fetchGitHubFile` surfaces that as a specific message rather than retrying — retrying would only burn the quota faster.
 
 ## Adding a sample
 

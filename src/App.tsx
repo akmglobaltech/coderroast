@@ -1,9 +1,12 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnalyzingBadge, CodeSpinner, LiveBadge, ScanBar } from "./components/Analyzing";
+import ChallengeBar from "./components/ChallengeBar";
 import FindingsList from "./components/FindingsList";
+import GitHubLoader from "./components/GitHubLoader";
 import ScoreCard from "./components/ScoreCard";
 import ShareBar from "./components/ShareBar";
 import StatsPanel from "./components/StatsPanel";
+import { readRoastHash } from "./lib/permalink";
 import { normalizeCode, shareText, type Language } from "./lib/roast";
 import { SAMPLES } from "./lib/samples";
 import { useLiveRoast } from "./lib/useLiveRoast";
@@ -35,6 +38,29 @@ export default function App() {
   const [language, setLanguage] = useState<Language | "auto">("auto");
   const [copied, setCopied] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
+
+  // A shared challenge arrives in the hash, so it is never sent to a server.
+  // Hydrate once on mount, then again if the hash changes (back/forward).
+  useEffect(() => {
+    const hydrate = () => {
+      const link = readRoastHash(window.location.hash);
+      if (!link) return;
+      setCode(link.code);
+      setLanguage(link.language);
+    };
+    hydrate();
+    window.addEventListener("hashchange", hydrate);
+    return () => window.removeEventListener("hashchange", hydrate);
+  }, []);
+
+  // Once the visitor edits a hydrated challenge, the hash no longer describes
+  // what is on screen — drop it so a reload does not resurrect the old code.
+  const editCode = (next: string) => {
+    if (window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+    setCode(next);
+  };
 
   const { result, pending, flush } = useLiveRoast(code, language);
 
@@ -105,7 +131,7 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() => setCode(SAMPLES[language])}
+              onClick={() => editCode(SAMPLES[language])}
               title={`Load a deliberately bad ${language === "auto" ? "JavaScript" : LANGUAGES.find((l) => l.value === language)?.label} sample`}
               className="rounded-lg border border-ink-line bg-ink-soft px-3 py-1.5 font-mono text-xs text-white/60 transition hover:border-flame/40 hover:text-white"
             >
@@ -115,12 +141,19 @@ export default function App() {
             <button
               type="button"
               onClick={() => {
-                setCode("");
+                editCode("");
               }}
               className="rounded-lg border border-ink-line bg-ink-soft px-3 py-1.5 font-mono text-xs text-white/60 transition hover:border-flame/40 hover:text-white"
             >
               Clear
             </button>
+
+            <GitHubLoader
+              onLoad={(file) => {
+                editCode(file.code);
+                if (file.language) setLanguage(file.language as Language);
+              }}
+            />
 
             <span className="ml-auto flex items-center gap-2 font-mono text-[11px] text-white/30">
               {code.trim() && (pending ? <AnalyzingBadge /> : <LiveBadge />)}
@@ -131,7 +164,7 @@ export default function App() {
           <div className="relative">
             <textarea
               value={code}
-              onChange={(e) => setCode(e.target.value)}
+              onChange={(e) => editCode(e.target.value)}
               onKeyDown={onKeyDown}
               spellCheck={false}
               placeholder={"// paste your code here\n// the score updates as you type"}
@@ -196,6 +229,13 @@ export default function App() {
                 url={appUrl()}
                 onCopyText={copy}
                 copied={copied}
+              />
+
+              <ChallengeBar
+                result={result}
+                code={code}
+                language={language}
+                baseUrl={appUrl()}
               />
 
               <StatsPanel stats={result.stats} />
