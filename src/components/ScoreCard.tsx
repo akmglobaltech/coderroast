@@ -1,11 +1,13 @@
 import type { RoastResult } from "../lib/roast";
 import { gradeColor } from "../lib/share";
+import { CodeSpinner } from "./Analyzing";
 
 interface Props {
   result: RoastResult;
+  pending?: boolean;
 }
 
-export default function ScoreCard({ result }: Props) {
+export default function ScoreCard({ result, pending = false }: Props) {
   const accent = gradeColor(result.grade);
   const circumference = 2 * Math.PI * 78;
   const dash = (result.score / 100) * circumference;
@@ -41,6 +43,11 @@ export default function ScoreCard({ result }: Props) {
             </span>
             <span className="font-mono text-[11px] tracking-widest text-white/35">/ 100</span>
           </div>
+          {pending && (
+            <div className="absolute -right-1 -top-1 grid h-8 w-8 place-items-center rounded-full border border-ink-line bg-ink text-flame shadow-lg">
+              <CodeSpinner size={16} />
+            </div>
+          )}
         </div>
 
         <div className="min-w-0 flex-1 text-center sm:text-left">

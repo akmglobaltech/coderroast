@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { AnalyzingBadge, CodeSpinner, LiveBadge, ScanBar } from "./components/Analyzing";
 import FindingsList from "./components/FindingsList";
 import ScoreCard from "./components/ScoreCard";
 import StatsPanel from "./components/StatsPanel";
@@ -134,29 +135,26 @@ export default function App() {
             </button>
 
             <span className="ml-auto flex items-center gap-2 font-mono text-[11px] text-white/30">
-              {code.trim() && (
-                <span
-                  className={`flex items-center gap-1.5 ${pending ? "text-flame/70" : "text-emerald-400/60"}`}
-                  title={pending ? "Analyzing…" : "Score is up to date"}
-                >
-                  <span
-                    className={`h-1.5 w-1.5 rounded-full ${pending ? "animate-pulse bg-flame" : "bg-emerald-400"}`}
-                  />
-                  {pending ? "analyzing" : "live"}
-                </span>
-              )}
+              {code.trim() && (pending ? <AnalyzingBadge /> : <LiveBadge />)}
               {lineCount} lines · {charCount.toLocaleString()} chars
             </span>
           </div>
 
-          <textarea
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            onKeyDown={onKeyDown}
-            spellCheck={false}
-            placeholder={"// paste your code here\n// the score updates as you type"}
-            className="scroll-thin h-[420px] w-full resize-y rounded-xl border border-ink-line bg-ink-soft/70 p-4 font-mono text-[13px] leading-relaxed text-white/85 outline-none transition placeholder:text-white/20 focus:border-flame/50 lg:h-[520px]"
-          />
+          <div className="relative">
+            <textarea
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              onKeyDown={onKeyDown}
+              spellCheck={false}
+              placeholder={"// paste your code here\n// the score updates as you type"}
+              className="scroll-thin h-[420px] w-full resize-y rounded-xl border border-ink-line bg-ink-soft/70 p-4 font-mono text-[13px] leading-relaxed text-white/85 outline-none transition placeholder:text-white/20 focus:border-flame/50 lg:h-[520px]"
+            />
+            {pending && (
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 pb-3">
+                <ScanBar />
+              </div>
+            )}
+          </div>
 
           <button
             type="button"
@@ -179,19 +177,31 @@ export default function App() {
         <section ref={resultsRef} className="flex flex-col gap-4">
           {!result && (
             <div className="grid flex-1 place-items-center rounded-2xl border border-dashed border-ink-line bg-ink-soft/30 p-10 text-center">
-              <div>
-                <div className="mb-3 text-4xl opacity-40">🍳</div>
-                <p className="text-sm font-medium text-white/45">No roast yet.</p>
-                <p className="mt-1 text-xs text-white/25">
-                  Paste code on the left — the score appears as you type.
-                </p>
-              </div>
+              {pending ? (
+                <div className="flex flex-col items-center">
+                  <CodeSpinner size={72} ring />
+                  <p className="mt-5 font-mono text-sm font-semibold text-flame/90">
+                    Analyzing<span className="animate-dot inline-block">…</span>
+                  </p>
+                  <p className="mt-1 text-xs text-white/30">
+                    Reading your code, counting the crimes.
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <div className="mb-3 text-4xl opacity-40">🍳</div>
+                  <p className="text-sm font-medium text-white/45">No roast yet.</p>
+                  <p className="mt-1 text-xs text-white/25">
+                    Paste code on the left — the score appears as you type.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
           {result && !result.empty && (
             <>
-              <ScoreCard result={result} />
+              <ScoreCard result={result} pending={pending} />
 
               <div className="flex gap-2">
                 <button
